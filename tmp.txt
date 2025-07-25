@@ -1,0 +1,817 @@
+"use client"
+
+import type React from "react"
+
+import { useState, useRef } from "react"
+import { Plus, Edit, Trash2, Users, ArrowLeft, Upload, ImageIcon, FileText, X, GripVertical } from "lucide-react"
+import { Button } from "@/components/ui/button"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Input } from "@/components/ui/input"
+import { Badge } from "@/components/ui/badge"
+import { Avatar, AvatarFallback } from "@/components/ui/avatar"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog"
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import jsPDF from "jspdf"
+
+interface Task {
+  id: string
+  title: string
+  priority: "low" | "medium" | "high"
+}
+
+interface StaffImage {
+  id: string
+  file: File
+  url: string
+  name: string
+  order: number
+  staffId: string
+  staffName: string
+  taskId: string
+  taskTitle: string
+}
+
+interface StaffMember {
+  id: string
+  name: string
+  color: string
+  tasks: Task[]
+  images: StaffImage[]
+}
+
+interface StaffManagementProps {
+  staffMembers: StaffMember[]
+  onUpdateStaff: (staff: StaffMember[]) => void
+  onBack: () => void
+}
+
+const colorOptions = [
+  { value: "bg-blue-500", label: "Blue", preview: "#3b82f6" },
+  { value: "bg-green-500", label: "Green", preview: "#10b981" },
+  { value: "bg-purple-500", label: "Purple", preview: "#8b5cf6" },
+  { value: "bg-orange-500", label: "Orange", preview: "#f97316" },
+  { value: "bg-pink-500", label: "Pink", preview: "#ec4899" },
+  { value: "bg-red-500", label: "Red", preview: "#ef4444" },
+  { value: "bg-yellow-500", label: "Yellow", preview: "#eab308" },
+  { value: "bg-indigo-500", label: "Indigo", preview: "#6366f1" },
+  { value: "bg-teal-500", label: "Teal", preview: "#14b8a6" },
+  { value: "bg-cyan-500", label: "Cyan", preview: "#06b6d4" },
+  { value: "bg-emerald-500", label: "Emerald", preview: "#059669" },
+  { value: "bg-violet-500", label: "Violet", preview: "#7c3aed" },
+]
+
+export default function StaffManagement({ staffMembers, onUpdateStaff, onBack }: StaffManagementProps) {
+  const [showAddForm, setShowAddForm] = useState(false)
+  const [editingStaff, setEditingStaff] = useState<StaffMember | null>(null)
+  const [formName, setFormName] = useState("")
+  const [formColor, setFormColor] = useState("bg-blue-500")
+  const [draggedImageId, setDraggedImageId] = useState<string | null>(null)
+  const [isGeneratingPDF, setIsGeneratingPDF] = useState(false)
+  const [showUploadDialog, setShowUploadDialog] = useState(false)
+  const [selectedStaffForUpload, setSelectedStaffForUpload] = useState<StaffMember | null>(null)
+  const [selectedTaskId, setSelectedTaskId] = useState<string>("")
+  const [pendingFiles, setPendingFiles] = useState<FileList | null>(null)
+  const fileInputRefs = useRef<{ [key: string]: HTMLInputElement | null }>({})
+
+  // Get all images from all staff members
+  const getAllImages = () => {
+    const images: StaffImage[] = []
+    staffMembers.forEach((staff) => {
+      images.push(...staff.images)
+    })
+    return images.sort((a, b) => a.order - b.order)
+  }
+
+  // Get staff members who have assigned tasks
+  const getStaffWithTasks = () => {
+    return staffMembers.filter((staff) => staff.tasks.length > 0)
+  }
+
+  const resetForm = () => {
+    setFormName("")
+    setFormColor("bg-blue-500")
+    setShowAddForm(false)
+    setEditingStaff(null)
+    setTimeout(() => {
+      const input = document.getElementById("staffName") as HTMLInputElement
+      if (input) {
+        input.value = ""
+        input.focus()
+      }
+    }, 0)
+  }
+
+  const handleAdd = () => {
+    if (!formName.trim()) return
+
+    const newStaff: StaffMember = {
+      id: Date.now().toString(),
+      name: formName,
+      color: formColor,
+      tasks: [],
+      images: [],
+    }
+
+    onUpdateStaff([...staffMembers, newStaff])
+    resetForm()
+  }
+
+  const handleEdit = (staff: StaffMember) => {
+    setEditingStaff(staff)
+    setFormName(staff.name)
+    setFormColor(staff.color)
+    setShowAddForm(true)
+    setTimeout(() => {
+      const input = document.getElementById("staffName") as HTMLInputElement
+      if (input) {
+        input.focus()
+        input.select()
+      }
+    }, 100)
+  }
+
+  const handleUpdate = () => {
+    if (!formName.trim() || !editingStaff) return
+
+    const updatedStaff = staffMembers.map((staff) =>
+      staff.id === editingStaff.id ? { ...staff, name: formName, color: formColor } : staff,
+    )
+
+    onUpdateStaff(updatedStaff)
+    resetForm()
+  }
+
+  const handleDelete = (staffId: string) => {
+    const updatedStaff = staffMembers.filter((staff) => staff.id !== staffId)
+    onUpdateStaff(updatedStaff)
+  }
+
+  const openUploadDialog = (staff: StaffMember) => {
+    setSelectedStaffForUpload(staff)
+    setSelectedTaskId(staff.tasks.length === 1 ? staff.tasks[0].id : "")
+    setShowUploadDialog(true)
+  }
+
+  const handleFileSelect = (files: FileList | null, staffId: string) => {
+    if (!files) return
+
+    const staff = staffMembers.find((s) => s.id === staffId)
+    if (!staff || staff.tasks.length === 0) return
+
+    if (staff.tasks.length === 1) {
+      // If staff has only one task, upload directly
+      handleFileUpload(files, staffId, staff.tasks[0].id)
+    } else {
+      // If staff has multiple tasks, show dialog to select task
+      setPendingFiles(files)
+      openUploadDialog(staff)
+    }
+  }
+
+  const handleFileUpload = (files: FileList | null, staffId: string, taskId: string) => {
+    if (!files) return
+
+    const staff = staffMembers.find((s) => s.id === staffId)
+    const task = staff?.tasks.find((t) => t.id === taskId)
+    if (!staff || !task) return
+
+    const newImages: StaffImage[] = []
+    const maxOrder = getAllImages().length > 0 ? Math.max(...getAllImages().map((img) => img.order)) : -1
+
+    Array.from(files).forEach((file, index) => {
+      if (file.type.startsWith("image/")) {
+        const imageId = Date.now().toString() + index
+        const url = URL.createObjectURL(file)
+
+        newImages.push({
+          id: imageId,
+          file,
+          url,
+          name: file.name,
+          order: maxOrder + index + 1,
+          staffId: staff.id,
+          staffName: staff.name,
+          taskId: task.id,
+          taskTitle: task.title,
+        })
+      }
+    })
+
+    const updatedStaff = staffMembers.map((s) => (s.id === staffId ? { ...s, images: [...s.images, ...newImages] } : s))
+
+    onUpdateStaff(updatedStaff)
+  }
+
+  const confirmUpload = () => {
+    if (pendingFiles && selectedStaffForUpload && selectedTaskId) {
+      handleFileUpload(pendingFiles, selectedStaffForUpload.id, selectedTaskId)
+    }
+    setShowUploadDialog(false)
+    setSelectedStaffForUpload(null)
+    setSelectedTaskId("")
+    setPendingFiles(null)
+  }
+
+  const removeImage = (imageId: string) => {
+    const updatedStaff = staffMembers.map((staff) => ({
+      ...staff,
+      images: staff.images.filter((img) => img.id !== imageId),
+    }))
+
+    // Reorder all remaining images
+    const allRemainingImages = getAllImages().filter((img) => img.id !== imageId)
+    const reorderedImages = allRemainingImages.map((img, index) => ({ ...img, order: index }))
+
+    // Update staff with reordered images
+    const finalStaff = updatedStaff.map((staff) => ({
+      ...staff,
+      images: reorderedImages.filter((img) => img.staffId === staff.id),
+    }))
+
+    onUpdateStaff(finalStaff)
+  }
+
+  const handleImageDragStart = (e: React.DragEvent, imageId: string) => {
+    setDraggedImageId(imageId)
+    e.dataTransfer.effectAllowed = "move"
+  }
+
+  const handleImageDragOver = (e: React.DragEvent) => {
+    e.preventDefault()
+    e.dataTransfer.dropEffect = "move"
+  }
+
+  const handleImageDrop = (e: React.DragEvent, targetImageId: string) => {
+    e.preventDefault()
+
+    if (!draggedImageId || draggedImageId === targetImageId) {
+      setDraggedImageId(null)
+      return
+    }
+
+    const allCurrentImages = getAllImages()
+    const draggedIndex = allCurrentImages.findIndex((img) => img.id === draggedImageId)
+    const targetIndex = allCurrentImages.findIndex((img) => img.id === targetImageId)
+
+    if (draggedIndex === -1 || targetIndex === -1) {
+      setDraggedImageId(null)
+      return
+    }
+
+    const newImages = [...allCurrentImages]
+    const [draggedImage] = newImages.splice(draggedIndex, 1)
+    newImages.splice(targetIndex, 0, draggedImage)
+
+    // Reorder all images
+    const reorderedImages = newImages.map((img, index) => ({ ...img, order: index }))
+
+    // Update staff with reordered images
+    const updatedStaff = staffMembers.map((staff) => ({
+      ...staff,
+      images: reorderedImages.filter((img) => img.staffId === staff.id),
+    }))
+
+    onUpdateStaff(updatedStaff)
+    setDraggedImageId(null)
+  }
+
+  const generatePDF = async () => {
+    const allCurrentImages = getAllImages()
+    if (allCurrentImages.length === 0) return
+
+    setIsGeneratingPDF(true)
+
+    try {
+      const pdf = new jsPDF()
+
+      for (let i = 0; i < allCurrentImages.length; i++) {
+        const image = allCurrentImages[i]
+
+        // Add new page for each image except the first one
+        if (i > 0) {
+          pdf.addPage()
+        }
+
+        // Load image
+        const img = new Image()
+        img.crossOrigin = "anonymous"
+
+        await new Promise((resolve, reject) => {
+          img.onload = () => {
+            try {
+              // Calculate dimensions to fit the page
+              const pageWidth = pdf.internal.pageSize.getWidth()
+              const pageHeight = pdf.internal.pageSize.getHeight()
+              const margin = 20
+              const availableWidth = pageWidth - margin * 2
+              const availableHeight = pageHeight - margin * 5 // Extra margin for headers and page number
+
+              let imgWidth = img.width
+              let imgHeight = img.height
+
+              // Scale image to fit within available space
+              const widthRatio = availableWidth / imgWidth
+              const heightRatio = availableHeight / imgHeight
+              const ratio = Math.min(widthRatio, heightRatio)
+
+              imgWidth *= ratio
+              imgHeight *= ratio
+
+              // Center the image
+              const x = (pageWidth - imgWidth) / 2
+              const y = margin + 30 // Leave space for staff name and task
+
+              // Add staff name at top
+              pdf.setFontSize(14)
+              pdf.setTextColor(0, 0, 0)
+              pdf.text(`Staff: ${image.staffName}`, pageWidth / 2, 15, { align: "center" })
+
+              // Add task title
+              pdf.setFontSize(12)
+              pdf.setTextColor(64, 64, 64)
+              pdf.text(`Task: ${image.taskTitle}`, pageWidth / 2, margin, { align: "center" })
+
+              // Add image name
+              pdf.setFontSize(10)
+              pdf.setTextColor(96, 96, 96)
+              pdf.text(`Image: ${image.name}`, pageWidth / 2, margin + 10, { align: "center" })
+
+              // Add image to PDF
+              pdf.addImage(img, "JPEG", x, y, imgWidth, imgHeight)
+
+              // Add page number at bottom
+              pdf.setFontSize(10)
+              pdf.setTextColor(128, 128, 128)
+              pdf.text(`Page ${i + 1} of ${allCurrentImages.length}`, pageWidth / 2, pageHeight - 10, {
+                align: "center",
+              })
+
+              resolve(true)
+            } catch (error) {
+              reject(error)
+            }
+          }
+          img.onerror = reject
+          img.src = image.url
+        })
+      }
+
+      // Save the PDF
+      pdf.save(`all_staff_task_images_${new Date().toISOString().split("T")[0]}.pdf`)
+    } catch (error) {
+      console.error("Error generating PDF:", error)
+      alert("Error generating PDF. Please try again.")
+    } finally {
+      setIsGeneratingPDF(false)
+    }
+  }
+
+  const StaffForm = () => (
+    <Card className="mb-6">
+      <CardHeader>
+        <CardTitle className="flex items-center justify-between">
+          <span className="flex items-center gap-2">
+            <Users className="h-5 w-5" />
+            {editingStaff ? "Edit Staff Member" : "Add New Staff Member"}
+          </span>
+          <Button variant="ghost" size="sm" onClick={resetForm}>
+            ✕
+          </Button>
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div className="space-y-6">
+          {/* Name Input */}
+          <div className="space-y-2">
+            <label htmlFor="staffName" className="text-sm font-medium text-gray-700">
+              Staff Name *
+            </label>
+            <Input
+              id="staffName"
+              type="text"
+              placeholder="Enter staff member name..."
+              value={formName}
+              onChange={(e) => setFormName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && formName.trim()) {
+                  e.preventDefault()
+                  editingStaff ? handleUpdate() : handleAdd()
+                }
+                if (e.key === "Escape") {
+                  e.preventDefault()
+                  resetForm()
+                }
+              }}
+              className="w-full"
+              autoFocus
+              autoComplete="off"
+            />
+          </div>
+
+          {/* Color Selection */}
+          <div className="space-y-3">
+            <label className="text-sm font-medium text-gray-700">Avatar Color</label>
+            <div className="grid grid-cols-6 gap-3">
+              {colorOptions.map((color) => (
+                <button
+                  key={color.value}
+                  type="button"
+                  onClick={() => setFormColor(color.value)}
+                  className={`relative w-12 h-12 rounded-full border-2 transition-all hover:scale-110 focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+                    formColor === color.value
+                      ? "border-gray-900 ring-2 ring-gray-300"
+                      : "border-gray-200 hover:border-gray-400"
+                  }`}
+                  style={{ backgroundColor: color.preview }}
+                  title={color.label}
+                  aria-label={`Select ${color.label} color`}
+                >
+                  {formColor === color.value && (
+                    <div className="absolute inset-0 flex items-center justify-center">
+                      <div className="w-3 h-3 bg-white rounded-full"></div>
+                    </div>
+                  )}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Preview */}
+          <div className="space-y-2">
+            <label className="text-sm font-medium text-gray-700">Preview</label>
+            <div className="flex items-center gap-3 p-4 bg-gray-50 rounded-lg">
+              <Avatar className="h-10 w-10">
+                <AvatarFallback className={`${formColor} text-white`}>
+                  {formName
+                    .trim()
+                    .split(" ")
+                    .map((n) => n[0])
+                    .join("")
+                    .toUpperCase() || "?"}
+                </AvatarFallback>
+              </Avatar>
+              <div>
+                <div className="font-medium text-sm">{formName.trim() || "Staff Name"}</div>
+                <div className="text-xs text-gray-500">Team Member</div>
+              </div>
+            </div>
+          </div>
+
+          {/* Action Buttons */}
+          <div className="flex gap-3 pt-2">
+            <Button
+              onClick={editingStaff ? handleUpdate : handleAdd}
+              disabled={!formName.trim()}
+              className="flex-1"
+              type="button"
+            >
+              {editingStaff ? "Update Staff Member" : "Add Staff Member"}
+            </Button>
+            <Button variant="outline" onClick={resetForm} className="flex-1 bg-transparent" type="button">
+              Cancel
+            </Button>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  )
+
+  return (
+    <div className="min-h-screen bg-gray-50 p-6">
+      <div className="max-w-6xl mx-auto">
+        {/* Header */}
+        <div className="mb-8">
+          <div className="flex items-center gap-4 mb-4">
+            <Button variant="outline" onClick={onBack} className="flex items-center gap-2 bg-transparent">
+              <ArrowLeft className="h-4 w-4" />
+              Back to Board
+            </Button>
+          </div>
+          <h1 className="text-3xl font-bold text-gray-900 mb-2">Staff Management</h1>
+          <p className="text-gray-600">Manage your team members • Add, edit, or remove staff • Upload task images</p>
+        </div>
+
+        {/* Add Staff Button */}
+        {!showAddForm && (
+          <Button onClick={() => setShowAddForm(true)} className="mb-6">
+            <Plus className="h-4 w-4 mr-2" />
+            Add Staff Member
+          </Button>
+        )}
+
+        {/* Add/Edit Form */}
+        {showAddForm && <StaffForm />}
+
+        {/* All Images Section */}
+        <Card className="mb-6">
+          <CardHeader>
+            <CardTitle className="flex items-center justify-between">
+              <span className="flex items-center gap-2">
+                <ImageIcon className="h-5 w-5" />
+                All Task Images
+                <Badge variant="secondary" className="text-xs">
+                  {getAllImages().length}
+                </Badge>
+              </span>
+              {getAllImages().length > 0 && (
+                <Button onClick={generatePDF} disabled={isGeneratingPDF} className="flex items-center gap-2">
+                  <FileText className="h-4 w-4" />
+                  {isGeneratingPDF ? "Generating PDF..." : "Generate PDF"}
+                </Button>
+              )}
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {getAllImages().length === 0 ? (
+              <div className="text-center py-8 text-gray-500">
+                <ImageIcon className="h-12 w-12 text-gray-400 mx-auto mb-4" />
+                <p>No task images uploaded yet. Assign tasks to staff members and upload images below.</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
+                {getAllImages().map((image, index) => (
+                  <Card
+                    key={image.id}
+                    className={`relative group cursor-move transition-all ${
+                      draggedImageId === image.id ? "opacity-50 scale-105" : ""
+                    }`}
+                    draggable
+                    onDragStart={(e) => handleImageDragStart(e, image.id)}
+                    onDragOver={handleImageDragOver}
+                    onDrop={(e) => handleImageDrop(e, image.id)}
+                  >
+                    <CardContent className="p-2">
+                      <div className="relative">
+                        <img
+                          src={image.url || "/placeholder.svg"}
+                          alt={image.name}
+                          className="w-full h-24 object-cover rounded"
+                        />
+
+                        {/* Order badge */}
+                        <Badge variant="secondary" className="absolute top-1 left-1 text-xs">
+                          {index + 1}
+                        </Badge>
+
+                        {/* Staff badge */}
+                        <Badge
+                          variant="outline"
+                          className="absolute bottom-1 left-1 text-xs bg-white/90 backdrop-blur-sm"
+                        >
+                          {image.staffName}
+                        </Badge>
+
+                        {/* Task badge */}
+                        <Badge
+                          variant="outline"
+                          className="absolute bottom-1 right-1 text-xs bg-blue-50/90 text-blue-700 border-blue-200 backdrop-blur-sm"
+                        >
+                          {image.taskTitle.length > 10 ? `${image.taskTitle.substring(0, 10)}...` : image.taskTitle}
+                        </Badge>
+
+                        {/* Drag handle */}
+                        <div className="absolute top-1 right-8 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <div className="bg-white rounded p-1 shadow">
+                            <GripVertical className="h-3 w-3 text-gray-500" />
+                          </div>
+                        </div>
+
+                        {/* Remove button */}
+                        <Button
+                          variant="destructive"
+                          size="sm"
+                          className="absolute top-1 right-1 h-6 w-6 p-0 opacity-0 group-hover:opacity-100 transition-opacity"
+                          onClick={() => removeImage(image.id)}
+                        >
+                          <X className="h-3 w-3" />
+                        </Button>
+                      </div>
+
+                      <p className="text-xs text-gray-600 mt-1 truncate" title={image.name}>
+                        {image.name}
+                      </p>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Staff List */}
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <h2 className="text-xl font-semibold text-gray-900">Team Members ({staffMembers.length})</h2>
+          </div>
+
+          {staffMembers.length === 0 ? (
+            <Card>
+              <CardContent className="text-center py-12">
+                <Users className="h-12 w-12 text-gray-400 mx-auto mb-4" />
+                <h3 className="text-lg font-medium text-gray-900 mb-2">No staff members yet</h3>
+                <p className="text-gray-500 mb-4">Get started by adding your first team member</p>
+                <Button onClick={() => setShowAddForm(true)}>
+                  <Plus className="h-4 w-4 mr-2" />
+                  Add Staff Member
+                </Button>
+              </CardContent>
+            </Card>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {staffMembers.map((staff) => (
+                <Card key={staff.id} className="hover:shadow-md transition-shadow">
+                  <CardContent className="p-6">
+                    <div className="flex items-center justify-between mb-4">
+                      <div className="flex items-center gap-3">
+                        <Avatar className="h-12 w-12">
+                          <AvatarFallback className={`${staff.color} text-white`}>
+                            {staff.name
+                              .split(" ")
+                              .map((n) => n[0])
+                              .join("")}
+                          </AvatarFallback>
+                        </Avatar>
+                        <div>
+                          <h3 className="font-medium text-gray-900">{staff.name}</h3>
+                          <p className="text-sm text-gray-500">Team Member</p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Button variant="ghost" size="sm" onClick={() => handleEdit(staff)} className="h-8 w-8 p-0">
+                          <Edit className="h-4 w-4" />
+                        </Button>
+                        <AlertDialog>
+                          <AlertDialogTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-8 w-8 p-0 text-red-600 hover:text-red-700 hover:bg-red-50"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </AlertDialogTrigger>
+                          <AlertDialogContent>
+                            <AlertDialogHeader>
+                              <AlertDialogTitle>Delete Staff Member</AlertDialogTitle>
+                              <AlertDialogDescription>
+                                Are you sure you want to delete {staff.name}? This action cannot be undone.
+                                {staff.tasks.length > 0 && (
+                                  <span className="block mt-2 text-amber-600 font-medium">
+                                    Warning: This staff member has {staff.tasks.length} assigned task(s).
+                                  </span>
+                                )}
+                                {staff.images.length > 0 && (
+                                  <span className="block mt-2 text-red-600 font-medium">
+                                    Warning: This will also delete {staff.images.length} uploaded image(s).
+                                  </span>
+                                )}
+                              </AlertDialogDescription>
+                            </AlertDialogHeader>
+                            <AlertDialogFooter>
+                              <AlertDialogCancel>Cancel</AlertDialogCancel>
+                              <AlertDialogAction
+                                onClick={() => handleDelete(staff.id)}
+                                className="bg-red-600 hover:bg-red-700"
+                              >
+                                Delete
+                              </AlertDialogAction>
+                            </AlertDialogFooter>
+                          </AlertDialogContent>
+                        </AlertDialog>
+                      </div>
+                    </div>
+
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="text-gray-500">Assigned Tasks</span>
+                        <Badge variant="secondary">{staff.tasks.length}</Badge>
+                      </div>
+
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="text-gray-500">Uploaded Images</span>
+                        <Badge variant="secondary">{staff.images.length}</Badge>
+                      </div>
+
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="text-gray-500">Avatar Color</span>
+                        <div className="flex items-center gap-2">
+                          <div
+                            className="w-4 h-4 rounded-full border border-gray-200"
+                            style={{
+                              backgroundColor: colorOptions.find((c) => c.value === staff.color)?.preview,
+                            }}
+                          />
+                          <span className="text-gray-700">
+                            {colorOptions.find((c) => c.value === staff.color)?.label}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Upload Images Section - Only show if staff has assigned tasks */}
+                      {staff.tasks.length > 0 ? (
+                        <div className="pt-3 border-t">
+                          <Button
+                            onClick={() => fileInputRefs.current[staff.id]?.click()}
+                            variant="outline"
+                            size="sm"
+                            className="w-full"
+                          >
+                            <Upload className="h-4 w-4 mr-2" />
+                            Upload Task Images
+                          </Button>
+                          <input
+                            ref={(el) => (fileInputRefs.current[staff.id] = el)}
+                            type="file"
+                            multiple
+                            accept="image/*"
+                            onChange={(e) => handleFileSelect(e.target.files, staff.id)}
+                            className="hidden"
+                          />
+                        </div>
+                      ) : (
+                        <div className="pt-3 border-t">
+                          <div className="text-center text-sm text-gray-500 py-2">
+                            <Upload className="h-4 w-4 mx-auto mb-1 opacity-50" />
+                            Assign tasks to enable image upload
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Upload Dialog for Multiple Tasks */}
+        <Dialog open={showUploadDialog} onOpenChange={setShowUploadDialog}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <Upload className="h-5 w-5" />
+                Select Task for Images
+              </DialogTitle>
+            </DialogHeader>
+            <div className="space-y-4">
+              <p className="text-sm text-gray-600">
+                {selectedStaffForUpload?.name} has multiple tasks assigned. Please select which task these images belong
+                to:
+              </p>
+
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-gray-700">Select Task *</label>
+                <Select value={selectedTaskId} onValueChange={setSelectedTaskId}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Choose a task..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {selectedStaffForUpload?.tasks.map((task) => (
+                      <SelectItem key={task.id} value={task.id}>
+                        <div className="flex items-center gap-2">
+                          <Badge
+                            variant="outline"
+                            className={`text-xs ${
+                              task.priority === "high"
+                                ? "bg-red-100 text-red-800 border-red-200"
+                                : task.priority === "medium"
+                                  ? "bg-yellow-100 text-yellow-800 border-yellow-200"
+                                  : "bg-green-100 text-green-800 border-green-200"
+                            }`}
+                          >
+                            {task.priority}
+                          </Badge>
+                          <span>{task.title}</span>
+                        </div>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="flex gap-3 pt-4">
+                <Button onClick={confirmUpload} disabled={!selectedTaskId} className="flex-1">
+                  Upload Images
+                </Button>
+                <Button variant="outline" onClick={() => setShowUploadDialog(false)} className="flex-1">
+                  Cancel
+                </Button>
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
+      </div>
+    </div>
+  )
+}

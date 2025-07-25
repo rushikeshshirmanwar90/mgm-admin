@@ -4,7 +4,7 @@ import { AddTaskForm } from './AddTaskForm'
 import { SearchBar } from './SearchBar'
 import { AllTasksSection } from './AllTaskSection'
 import { StaffMemberCard } from './StaffMemberCard'
-import { useTaskManagement } from './useTaskMangment'
+import { useTaskManagement } from '@/hooks/useTaskMangment'
 import BeautifulSpinner from '@/components/ui/BeautifulSpinner'
 import { ToastContainer } from 'react-toastify'
 
