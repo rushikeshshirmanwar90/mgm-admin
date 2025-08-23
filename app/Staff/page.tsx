@@ -23,7 +23,7 @@ import {
 import { Task } from "@/components/TaskAssignmentBoard/types"
 
 interface StaffMember {
-    id: string
+    _id: string
     name: string
     color: string
     tasks: Task[]
@@ -61,6 +61,7 @@ export default function StaffManagement({ onBack }: StaffManagementProps) {
         const fetchStaff = async () => {
             try {
                 const res = await axiosInstance.get("/staff")
+                console.log(res.data)
                 setStaffMembers(res.data)
             } catch (err) {
                 console.error("Failed to fetch staff:", err)
@@ -123,7 +124,7 @@ export default function StaffManagement({ onBack }: StaffManagementProps) {
         if (!formName.trim() || !editingStaff) return
         try {
             await toast.promise(
-                axiosInstance.put(`/staff?userId=${editingStaff.id}`, { name: formName, color: formColor }),
+                axiosInstance.put(`/staff?userId=${editingStaff._id}`, { name: formName, color: formColor }),
                 {
                     pending: "Updating staff member...",
                     success: "Staff member updated!",
@@ -140,6 +141,7 @@ export default function StaffManagement({ onBack }: StaffManagementProps) {
 
     const handleDelete = async (staffId: string) => {
         try {
+            console.log(staffId);
             await toast.promise(
                 axiosInstance.delete(`/staff?userId=${staffId}`),
                 {
@@ -187,7 +189,7 @@ export default function StaffManagement({ onBack }: StaffManagementProps) {
                             onKeyDown={(e) => {
                                 if (e.key === "Enter" && formName.trim()) {
                                     e.preventDefault()
-                                    {editingStaff ? handleUpdate() : handleAdd()}
+                                    { editingStaff ? handleUpdate() : handleAdd() }
                                 }
                                 if (e.key === "Escape") {
                                     e.preventDefault()
@@ -319,7 +321,7 @@ export default function StaffManagement({ onBack }: StaffManagementProps) {
                     ) : (
                         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                             {staffMembers?.map((staff) => (
-                                <Card key={staff.id} className="hover:shadow-md transition-shadow">
+                                <Card key={staff._id} className="hover:shadow-md transition-shadow">
                                     <CardContent className="p-6">
                                         <div className="flex items-center justify-between mb-4">
                                             <div className="flex items-center gap-3">
@@ -366,7 +368,7 @@ export default function StaffManagement({ onBack }: StaffManagementProps) {
                                                         <AlertDialogFooter>
                                                             <AlertDialogCancel>Cancel</AlertDialogCancel>
                                                             <AlertDialogAction
-                                                                onClick={() => handleDelete(staff.id)}
+                                                                onClick={() => handleDelete(staff._id)}
                                                                 className="bg-red-600 hover:bg-red-700"
                                                             >
                                                                 Delete

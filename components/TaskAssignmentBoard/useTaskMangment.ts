@@ -93,16 +93,28 @@ export const useTaskManagement = () => {
           );
           backendId = task?._id || taskId;
           await axiosInstance.delete(`/task?taskId=${backendId}`);
-        } else if (staffId) {
-          const staff = staffMembers.find((s) => s.id === staffId);
-          const task = staff?.tasks.find(
+        } else if (sourceType === "staff" && staffId) {
+          // Find the staff member and task
+          const staff = staffMembers.find((s) => s.id === staffId || s._id === staffId);
+          if (!staff) {
+            throw new Error("Staff member not found");
+          }
+          
+          const task = staff.tasks.find(
             (t) => t.id === taskId || t._id === taskId
           );
-          backendId = task?._id || taskId;
-          await axiosInstance.put(`/staff?userId=${staffId}`, {
+          if (!task) {
+            throw new Error("Task not found in staff member's tasks");
+          }
+          
+          backendId = task._id || taskId;
+          
+          // Use the correct API endpoint to remove the task from staff
+          await axiosInstance.put(`/staff?userId=${staff._id || staffId}`, {
             $pull: { tasks: { _id: backendId } },
           });
         }
+        
         // Refresh state from backend
         const [tasksRes, staffRes] = await Promise.all([
           axiosInstance.get("/task"),
@@ -124,9 +136,7 @@ export const useTaskManagement = () => {
   };
 
   // Duplicate a task via API
-  const duplicateTask = async (
-    task: Task
-  ) => {
+  const duplicateTask = async (task: Task) => {
     return toast.promise(
       (async () => {
         await axiosInstance.post("/task", { title: task.title });
@@ -224,35 +234,58 @@ export const useTaskManagement = () => {
 
     await toast.promise(
       (async () => {
-        if (targetType === "staff" && targetId) {
-          // Moving from All Tasks to Staff
-          if (source === "all") {
-            await axiosInstance.delete(`/task?taskId=${backendId}`);
-            await axiosInstance.put(`/staff?userId=${targetId}`, {
-              $push: { tasks: { ...task, assignedTo: targetId } },
-            });
+        try {
+          if (targetType === "staff" && targetId) {
+            const targetStaff = staffMembers.find(s => s.id === targetId || s._id === targetId);
+            if (!targetStaff) {
+              throw new Error("Target staff member not found");
+            }
+            const targetStaffId = targetStaff._id || targetId;
+            
+            // Moving from All Tasks to Staff
+            if (source === "all") {
+              await axiosInstance.delete(`/task?taskId=${backendId}`);
+              await axiosInstance.put(`/staff?userId=${targetStaffId}`, {
+                $push: { tasks: { ...task, assignedTo: targetStaffId } },
+              });
+            }
+            // Moving from one staff to another
+            else if (
+              source === "staff" &&
+              sourceStaffId &&
+              sourceStaffId !== targetId
+            ) {
+              const sourceStaff = staffMembers.find(s => s.id === sourceStaffId || s._id === sourceStaffId);
+              if (!sourceStaff) {
+                throw new Error("Source staff member not found");
+              }
+              const sourceStaffBackendId = sourceStaff._id || sourceStaffId;
+              
+              await axiosInstance.put(`/staff?userId=${sourceStaffBackendId}`, {
+                $pull: { tasks: { _id: backendId } },
+              });
+              await axiosInstance.put(`/staff?userId=${targetStaffId}`, {
+                $push: { tasks: { ...task, assignedTo: targetStaffId } },
+              });
+            }
+          } else if (targetType === "all") {
+            // Moving from staff to All Tasks
+            if (source === "staff" && sourceStaffId) {
+              const sourceStaff = staffMembers.find(s => s.id === sourceStaffId || s._id === sourceStaffId);
+              if (!sourceStaff) {
+                throw new Error("Source staff member not found");
+              }
+              const sourceStaffBackendId = sourceStaff._id || sourceStaffId;
+              
+              await axiosInstance.put(`/staff?userId=${sourceStaffBackendId}`, {
+                $pull: { tasks: { _id: backendId } },
+              });
+              await axiosInstance.post(`/task`, { title: task.title });
+            }
           }
-          // Moving from one staff to another
-          else if (
-            source === "staff" &&
-            sourceStaffId &&
-            sourceStaffId !== targetId
-          ) {
-            await axiosInstance.put(`/staff?userId=${sourceStaffId}`, {
-              $pull: { tasks: { _id: backendId } },
-            });
-            await axiosInstance.put(`/staff?userId=${targetId}`, {
-              $push: { tasks: { ...task, assignedTo: targetId } },
-            });
-          }
-        } else if (targetType === "all") {
-          // Moving from staff to All Tasks
-          if (source === "staff" && sourceStaffId) {
-            await axiosInstance.put(`/staff?userId=${sourceStaffId}`, {
-              $pull: { tasks: { _id: backendId } },
-            });
-            await axiosInstance.post(`/task`, { title: task.title });
-          }
+        } catch (error) {
+          console.error("Failed to update task assignment:", error);
+          throw error;
         }
         // After backend update, re-fetch data
         const [tasksRes, staffRes] = await Promise.all([
@@ -298,36 +331,53 @@ export const useTaskManagement = () => {
     // Set the moving task ID and target board ID for visual feedback
     setMovingTaskId(taskId);
     setTargetBoardId("all");
-    
+
     await toast.promise(
       (async () => {
-        // Find the staff and task to get _id
-        const staff = staffMembers.find((s) => s.id === staffId);
-        const task = staff?.tasks.find(
-          (t) => t.id === taskId || t._id === taskId
-        );
-        const backendId = task?._id || taskId;
-        // Remove from staff in DB
-        await axiosInstance.put(`/staff?userId=${staffId}`, {
-          $pull: { tasks: { _id: backendId } },
-        });
-        // Add to allTasks in DB
-        await axiosInstance.post(`/task`, { title: task?.title });
-        // Refresh state
-        const [tasksRes, staffRes] = await Promise.all([
-          axiosInstance.get("/task"),
-          axiosInstance.get("/staff"),
-        ]);
-        const { mappedTasks, mappedStaff } = mapApiData(
-          tasksRes.data,
-          staffRes.data
-        );
-        setAllTasks(mappedTasks);
-        setStaffMembers(mappedStaff);
-        
-        // Reset states after the operation is complete
-        setMovingTaskId(null);
-        setTargetBoardId(null);
+        try {
+          // Find the staff and task to get _id
+          const staff = staffMembers.find((s) => s.id === staffId || s._id === staffId);
+          if (!staff) {
+            throw new Error("Staff member not found");
+          }
+          
+          const task = staff.tasks.find(
+            (t) => t.id === taskId || t._id === taskId
+          );
+          if (!task) {
+            throw new Error("Task not found in staff member's tasks");
+          }
+          
+          const backendId = task._id || taskId;
+          const staffBackendId = staff._id || staffId;
+          
+          // Remove from staff in DB
+          await axiosInstance.put(`/staff?userId=${staffBackendId}`, {
+            $pull: { tasks: { _id: backendId } },
+          });
+          
+          // Add to allTasks in DB
+          await axiosInstance.post(`/task`, { title: task.title });
+          
+          // Refresh state
+          const [tasksRes, staffRes] = await Promise.all([
+            axiosInstance.get("/task"),
+            axiosInstance.get("/staff"),
+          ]);
+          const { mappedTasks, mappedStaff } = mapApiData(
+            tasksRes.data,
+            staffRes.data
+          );
+          setAllTasks(mappedTasks);
+          setStaffMembers(mappedStaff);
+        } catch (error) {
+          console.error("Failed to remove task from staff:", error);
+          throw error;
+        } finally {
+          // Reset states after the operation is complete
+          setMovingTaskId(null);
+          setTargetBoardId(null);
+        }
       })(),
       {
         pending: "Updating task...",
