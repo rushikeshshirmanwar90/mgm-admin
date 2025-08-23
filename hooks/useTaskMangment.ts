@@ -1,5 +1,5 @@
 import { useState, useRef, useMemo, useEffect } from "react";
-import { Task, StaffMember, DragOverTarget } from "./types";
+import { Task, StaffMember, DragOverTarget } from "@/components/TaskAssignmentBoard/types";
 import axiosInstance from "@/lib/axiosInstance";
 import { toast } from "react-toastify";
 

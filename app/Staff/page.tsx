@@ -1,9 +1,7 @@
 "use client"
 
-import { useState, useEffect } from "react"
-import axiosInstance from "@/lib/axiosInstance"
-import { toast } from "react-toastify"
-import { Plus, Edit, Trash2, Users, ArrowLeft } from "lucide-react"
+import { useState } from "react"
+import { Plus, Users, ArrowLeft } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -23,7 +21,7 @@ import {
 import { Task } from "@/components/TaskAssignmentBoard/types"
 
 interface StaffMember {
-    _id: string
+    id: string
     name: string
     color: string
     tasks: Task[]
@@ -61,7 +59,6 @@ export default function StaffManagement({ onBack }: StaffManagementProps) {
         const fetchStaff = async () => {
             try {
                 const res = await axiosInstance.get("/staff")
-                console.log(res.data)
                 setStaffMembers(res.data)
             } catch (err) {
                 console.error("Failed to fetch staff:", err)
@@ -124,7 +121,7 @@ export default function StaffManagement({ onBack }: StaffManagementProps) {
         if (!formName.trim() || !editingStaff) return
         try {
             await toast.promise(
-                axiosInstance.put(`/staff?userId=${editingStaff._id}`, { name: formName, color: formColor }),
+                axiosInstance.put(`/staff?userId=${editingStaff.id}`, { name: formName, color: formColor }),
                 {
                     pending: "Updating staff member...",
                     success: "Staff member updated!",
@@ -141,7 +138,6 @@ export default function StaffManagement({ onBack }: StaffManagementProps) {
 
     const handleDelete = async (staffId: string) => {
         try {
-            console.log(staffId);
             await toast.promise(
                 axiosInstance.delete(`/staff?userId=${staffId}`),
                 {
@@ -189,7 +185,7 @@ export default function StaffManagement({ onBack }: StaffManagementProps) {
                             onKeyDown={(e) => {
                                 if (e.key === "Enter" && formName.trim()) {
                                     e.preventDefault()
-                                    { editingStaff ? handleUpdate() : handleAdd() }
+                                    {editingStaff ? handleUpdate() : handleAdd()}
                                 }
                                 if (e.key === "Escape") {
                                     e.preventDefault()
@@ -274,37 +270,63 @@ export default function StaffManagement({ onBack }: StaffManagementProps) {
         return <div className="flex justify-center items-center min-h-screen text-lg">Loading staff members...</div>
     }
 
-    return (
-        <div className="min-h-screen bg-gray-50 p-6">
-            <div className="max-w-6xl mx-auto">
-                {/* Header */}
-                <div className="mb-8">
-                    <div className="flex items-center gap-4 mb-4">
-                        <Button variant="outline" onClick={onBack} className="flex items-center gap-2 bg-transparent">
-                            <ArrowLeft className="h-4 w-4" />
-                            Back to Board
-                        </Button>
-                    </div>
-                    <h1 className="text-3xl font-bold text-gray-900 mb-2">Staff Management</h1>
-                    <p className="text-gray-600">Manage your team members • Add, edit, or remove staff</p>
-                </div>
+  return (
+    <div className="min-h-screen bg-gray-50 p-6">
+      <div className="max-w-6xl mx-auto">
+        {/* Header */}
+        <div className="mb-8">
+          <div className="flex items-center gap-4 mb-4">
+            <Button
+              variant="outline"
+              onClick={() => router.push("/")}
+              className="flex items-center gap-2 bg-transparent"
+            >
+              <ArrowLeft className="h-4 w-4" />
+              Back to Board
+            </Button>
+          </div>
+          <h1 className="text-3xl font-bold text-gray-900 mb-2">Staff Management</h1>
+          <p className="text-gray-600">Manage your team members • Add, edit, or remove staff • Upload task images</p>
+        </div>
 
-                {/* Add Staff Button */}
-                {!showAddForm && (
-                    <Button onClick={() => setShowAddForm(true)} className="mb-6">
-                        <Plus className="h-4 w-4 mr-2" />
-                        Add Staff Member
-                    </Button>
-                )}
+        {/* Add Staff Button */}
+        {!showAddForm && (
+          <Button onClick={() => setShowAddForm(true)} className="mb-6">
+            <Plus className="h-4 w-4 mr-2" />
+            Add Staff Member
+          </Button>
+        )}
 
-                {/* Add/Edit Form */}
-                {showAddForm && <StaffForm />}
+        {/* Add/Edit Form */}
+        {showAddForm && (
+          <StaffForm
+            formName={formName}
+            setFormName={setFormName}
+            formColor={formColor}
+            setFormColor={setFormColor}
+            editingStaff={editingStaff}
+            onSubmit={handleFormSubmit}
+            onCancel={handleFormCancel}
+          />
+        )}
 
-                {/* Staff List */}
-                <div className="space-y-4">
-                    <div className="flex items-center justify-between">
-                        <h2 className="text-xl font-semibold text-gray-900">Team Members ({staffMembers?.length || 0})</h2>
-                    </div>
+        {/* All Images Section */}
+        <AllImagesSection
+          images={getAllImages()}
+          isGeneratingPDF={isGeneratingPDF}
+          draggedImageId={draggedImageId}
+          onGeneratePDF={generatePDF}
+          onRemoveImage={removeImage}
+          onImageDragStart={handleImageDragStart}
+          onImageDragOver={handleImageDragOver}
+          onImageDrop={handleImageDrop}
+        />
+
+        {/* Staff List */}
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <h2 className="text-xl font-semibold text-gray-900">Team Members ({staffMembers.length})</h2>
+          </div>
 
                     {staffMembers?.length === 0 ? (
                         <Card>
@@ -321,7 +343,7 @@ export default function StaffManagement({ onBack }: StaffManagementProps) {
                     ) : (
                         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                             {staffMembers?.map((staff) => (
-                                <Card key={staff._id} className="hover:shadow-md transition-shadow">
+                                <Card key={staff.id} className="hover:shadow-md transition-shadow">
                                     <CardContent className="p-6">
                                         <div className="flex items-center justify-between mb-4">
                                             <div className="flex items-center gap-3">
@@ -368,7 +390,7 @@ export default function StaffManagement({ onBack }: StaffManagementProps) {
                                                         <AlertDialogFooter>
                                                             <AlertDialogCancel>Cancel</AlertDialogCancel>
                                                             <AlertDialogAction
-                                                                onClick={() => handleDelete(staff._id)}
+                                                                onClick={() => handleDelete(staff.id)}
                                                                 className="bg-red-600 hover:bg-red-700"
                                                             >
                                                                 Delete
